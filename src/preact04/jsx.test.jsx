@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { describe, it, expect } from "vitest";
 import PReact from './PReact'
 

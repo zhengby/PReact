@@ -27,7 +27,7 @@ describe('function Component', () => {
         expect(container.innerHTML).toEqual(`<div id="test"><h1 class="welcome">hello</h1><button>add</button><span>inner</span></div>`)    
     })
 
-    it.only('should support useState', async () => {
+    it('should support useState', async () => {
         const globalObject = {}
         function App(props) {
             const [count, setCount] = PReact.useState(100)
@@ -51,5 +51,37 @@ describe('function Component', () => {
             globalObject.setCount(globalObject.count + 1)
         })
         expect(globalObject.count).toBe(102)
+    })
+
+    it.only('should support useReducer', async () => {
+        const globalObject = {}
+        function reducer(state, action) {
+            switch (action.type) {
+                case 'add':
+                    return state + 1
+                case 'sub':
+                    return state - 1
+            }
+        }
+        function App(props) {
+            const [count, dispatch] = PReact.useReducer(reducer, 100)
+            globalObject.count = count
+            globalObject.dispatch = dispatch
+            return (
+                <div>
+                    {count}
+                </div>
+            )
+        }
+        const container = document.createElement('div')
+        const root = PReact.createRoot(container)
+        await PReact.act(() => {
+            root.render(<App />)
+        })
+        await PReact.act(() => {
+            globalObject.dispatch({ type: 'sub' })
+            globalObject.dispatch({ type: 'sub' })
+        })
+        expect(globalObject.count).toBe(98)
     })
 })

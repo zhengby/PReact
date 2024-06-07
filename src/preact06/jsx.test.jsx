@@ -24,7 +24,7 @@ describe('function Component', () => {
             root.render(dom)
             expect(container.innerHTML).toEqual(``)
         })
-        expect(container.innerHTML).toEqual(`<div id="test"><h1 class="welcome">hello</h1><button>add</button><span>inner</span></div>`)    
+        expect(container.innerHTML).toEqual(`<div id="test"><h1 class="welcome">hello</h1><button>add</button><span>inner</span></div>`)
     })
 
     it('should support useState', async () => {
@@ -113,5 +113,47 @@ describe('function Component', () => {
         })
         expect(increaseSpy).toBeCalledTimes(2)
         expect(globalObject.count).toBe(102)
+    })
+})
+
+describe('Reconciler', () => {
+    it('should support DOM CRUD', async () => {
+        function App() {
+            const [count, setCount] = PReact.useState(2)
+            return (
+                <div>
+                    {count}
+                    <button onClick={() => setCount(count + 1)}>+</button>
+                    <button onClick={() => setCount(count - 1)}>-</button>
+                    <ul>
+                        {Array(count).fill(1).map((val, index) => {
+                            return (
+                                <li>{index}</li>
+                            )
+                        })}
+                    </ul>
+                </div>
+            )
+        }
+        const container = document.createElement('div')
+        const root = PReact.createRoot(container)
+        await PReact.act(() => {
+            root.render(<App />)
+        })
+        expect(container.innerHTML).toEqual(`<div>2<button>+</button><button>-</button><ul><li>0</li><li>1</li></ul></div>`)
+        await PReact.act(() => {
+            container.querySelectorAll('button')[0].click()
+        })
+        expect(container.innerHTML).toEqual(`<div>3<button>+</button><button>-</button><ul><li>0</li><li>1</li><li>2</li></ul></div>`)
+        await PReact.act(() => {
+            container.querySelectorAll('button')[1].click()
+            // 这里如果连续执行则不会生效，原因是这个时候的 count 还是 3
+            // container.querySelectorAll('button')[1].click()
+        })
+        await PReact.act(() => {
+            // 非连续执行，则符合预期
+            container.querySelectorAll('button')[1].click()
+        })
+        expect(container.innerHTML).toEqual(`<div>1<button>+</button><button>-</button><ul><li>0</li></ul></div>`)
     })
 })

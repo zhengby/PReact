@@ -31,6 +31,9 @@ let currentHookFiber = null
 let currentHookIndex = 0
 const isEvent = key => key.startsWith('on')
 const isProperty = key => key !== 'children' && !isEvent(key)
+const isGone = (prevProps, nextProps) => key => !(key in nextProps)
+const isChange = (prevProps, nextProps) => key => (key in prevProps) && (key in nextProps) && prevProps[key] !== nextProps[key]
+const isNew = (prevProps, nextProps) => key => !(key in prevProps) && (key in nextProps)
 
 class RootElement {
     _internalRoot = null
@@ -50,6 +53,7 @@ class RootElement {
             }
         }
         workInProgressRoot = this._internalRoot
+        workInProgressRoot.deletions = []
         workInProgress = workInProgressRoot.current.alternate
         window.requestIdleCallback(workloop)
     }
@@ -60,11 +64,83 @@ function workloop() {
         workInProgress = performUnitOfWork(workInProgress)
     }
     if (!workInProgress && workInProgressRoot.current.alternate) {
-        workInProgressRoot.current = workInProgressRoot.current.alternate
-        workInProgressRoot.current.alternate = null
+        commitRoot()
     }
 }
 
+function commitRoot() {
+    workInProgressRoot.deletions.forEach(commitWork)
+    commitWork(workInProgressRoot.current.alternate.child)
+
+    workInProgressRoot.current = workInProgressRoot.current.alternate
+    workInProgressRoot.current.alternate = null
+}
+
+function commitWork(fiber) {
+    if (!fiber) {
+        return
+    }
+    let domParentFiber = null
+    if (fiber.return) {
+        domParentFiber = fiber.return
+        while (!domParentFiber.stateNode) {
+            domParentFiber = domParentFiber.return
+        }
+    }
+    if (fiber.effectTag === 'PLACEMENT' && fiber.stateNode) {
+        updateDom(fiber.stateNode, {}, fiber.props)
+        domParentFiber.stateNode.appendChild(fiber.stateNode)
+    } else if (fiber.effectTag === 'UPDATE') {
+        updateDom(fiber.stateNode, fiber.alternate.props, fiber.props)
+    } else if (fiber.effectTag === 'DELETION') {
+        commitDeletion(fiber, domParentFiber.stateNode)
+    }
+    commitWork(fiber.child)
+    commitWork(fiber.sibling)
+}
+
+function updateDom(stateNode, prevProps, nextProps) {
+    // remove or change event binding
+    Object.keys(prevProps)
+        .filter(isEvent)
+        .filter(key => isGone(prevProps, nextProps)(key) || isChange(prevProps, nextProps)(key))
+        .forEach(key => {
+            const eventName = key.toLowerCase().substring(2)
+            stateNode.removeEventListener(eventName, prevProps[key])
+        })
+    // remove deleted props 
+    Object.keys(prevProps)
+        .filter(isProperty)
+        .filter(key => isGone(prevProps, nextProps)(key))
+        .forEach(key => {
+            stateNode[key] = ''
+        })
+    // set new or change props
+    Object.keys(nextProps)
+        .filter(isProperty)
+        .filter(key => isNew(prevProps, nextProps)(key) || isChange(prevProps, nextProps)(key))
+        .forEach(key => {
+            stateNode[key] = nextProps[key]
+        })
+    // add new or change event
+    Object.keys(nextProps)
+        .filter(isEvent)
+        .filter(key => isNew(prevProps, nextProps)(key) || isChange(prevProps, nextProps)(key))
+        .forEach(key => {
+            const eventName = key.toLowerCase().substring(2)
+            stateNode.addEventListener(eventName, nextProps[key])
+        })
+}
+
+function commitDeletion(fiber, parentStateNode) {
+    if (fiber.stateNode) {
+        if (parentStateNode.contains(fiber.stateNode)) {
+            parentStateNode.removeChild(fiber.stateNode)
+        }
+    } else {
+        commitDeletion(fiber.child, parentStateNode)
+    }
+}
 function performUnitOfWork(fiber) {
     console.log('perform ', fiber)
     // 处理当前 fiber，创建 dom 设置属性
@@ -77,70 +153,70 @@ function performUnitOfWork(fiber) {
     } else {
         if (!fiber.stateNode) {
             fiber.stateNode = fiber.type === 'HostText' ? document.createTextNode('') : document.createElement(fiber.type)
-            Object.keys(fiber.props)
-                .filter(isProperty)
-                .forEach(key => {
-                    fiber.stateNode[key] = fiber.props[key]
-                })
-            Object.keys(fiber.props)
-                .filter(isEvent)
-                .forEach(key => {
-                    const eventName = key.toLowerCase().substring(2)
-                    fiber.stateNode.addEventListener(eventName, fiber.props[key])
-                })
         }
-        if (fiber.return) {
-            let fiberParent = fiber.return
-            while (!fiberParent.stateNode) {
-                fiberParent = fiberParent.return
-            }
-            fiberParent.stateNode.appendChild(fiber.stateNode)
-        }
+
     }
     // 初始化 children 的 fiber
-    if (fiber.props.children) {
-        let prevSibling = null
-        // mount 阶段 oldFiber 为空，update 阶段为上一次的值
-        let oldFiber = fiber?.alternate?.child
-        fiber.props.children.forEach((child, index) => {
-            let newFiber = null
-            if (!oldFiber) {
-                // mount
-                newFiber = {
-                    type: child.type,
-                    stateNode: null,
-                    props: child.props,
-                    return: fiber,
-                    alternate: null,
-                    child: null,
-                    sibling: null,
-                }
-            } else {
-                // update
-                newFiber = {
-                    type: child.type,
-                    stateNode: oldFiber.stateNode,
-                    props: child.props,
-                    return: fiber,
-                    alternate: oldFiber,
-                    child: null,
-                    sibling: null,
-                }
-            }
-
-            if (oldFiber) {
-                oldFiber = oldFiber.sibling
-            }
-            if (index === 0) {
-                fiber.child = newFiber
-            } else {
-                prevSibling.sibling = newFiber
-            }
-            prevSibling = newFiber
-        })
-    }
+    reconcileChildren(fiber)
     // 返回下一个要处理的 fiber
     return getNextFiber(fiber)
+}
+
+function reconcileChildren(fiber) {
+    let prevSibling = null
+    // mount 阶段 oldFiber 为空，update 阶段为上一次的值
+    let oldFiber = fiber?.alternate?.child
+    // fiber.props.children.forEach((child, index) => {
+    let index = 0
+    while (index < fiber.props.children.length || oldFiber) {
+        const child = fiber.props.children[index]
+        let newFiber = null
+        let sameType = oldFiber && child && child.type === oldFiber.type
+        if (child && !sameType) {
+            // mount
+            newFiber = {
+                type: child.type,
+                stateNode: null,
+                props: child.props,
+                return: fiber,
+                alternate: null,
+                child: null,
+                sibling: null,
+                effectTag: 'PLACEMENT',
+            }
+        } else if (sameType) {
+            // update
+            newFiber = {
+                type: child.type,
+                stateNode: oldFiber.stateNode,
+                props: child.props,
+                return: fiber,
+                alternate: oldFiber,
+                child: null,
+                sibling: null,
+                effectTag: 'UPDATE'
+            }
+        } else if (!sameType && oldFiber) {
+            // delete
+            oldFiber.effectTag = 'DELETION'
+            workInProgressRoot.deletions.push(oldFiber)
+        }
+
+        if (oldFiber) {
+            oldFiber = oldFiber.sibling
+        }
+        if (index === 0) {
+            fiber.child = newFiber
+        } else {
+            if (prevSibling) {
+                prevSibling.sibling = newFiber
+            }
+        }
+        prevSibling = newFiber
+        index++
+    }
+    // })
+
 }
 
 function getNextFiber(fiber) {
@@ -198,10 +274,11 @@ function useState(initialState) {
         hook.queue.push(_action)
         // re-render
         workInProgressRoot.current.alternate = {
-            stateNode: workInProgressRoot.current.container,
+            stateNode: workInProgressRoot.container,
             props: workInProgressRoot.current.props,
             alternate: workInProgressRoot.current, // 重要，交换 alternate
         }
+        workInProgressRoot.deletions = []
         workInProgress = workInProgressRoot.current.alternate
         window.requestIdleCallback(workloop)
     }

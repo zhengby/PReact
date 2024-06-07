@@ -19,7 +19,6 @@ describe('function Component', () => {
             </App>
         )
         const root = PReact.createRoot(container)
-        console.log('dom ', dom)
         await PReact.act(() => {
             root.render(dom)
             expect(container.innerHTML).toEqual(``)
@@ -156,4 +155,65 @@ describe('Reconciler', () => {
         })
         expect(container.innerHTML).toEqual(`<div>1<button>+</button><button>-</button><ul><li>0</li></ul></div>`)
     })
+
+    it('should support useEffect', async () => {
+        function mountCall() {
+            console.log('mounted')
+        }
+        function updateCall() {
+            console.log('updated')
+        }
+        const globalObject = {
+            mountCall,
+            updateCall,
+        }
+        const mountSpy = vi.spyOn(globalObject, 'mountCall')
+        const updateSpy = vi.spyOn(globalObject, 'updateCall')
+        function App() {
+            const [count, setCount] = PReact.useState(2)
+            PReact.useEffect(() => {
+                globalObject.mountCall()
+            }, [])
+            PReact.useEffect(() => {
+                globalObject.updateCall()
+            }, [count])
+            return (
+                <div>
+                    {count}
+                    <button onClick={() => setCount(count + 1)}>+</button>
+                    <button onClick={() => setCount(count - 1)}>-</button>
+                    <ul>
+                        {Array(count).fill(1).map((val, index) => {
+                            return (
+                                <li>{index}</li>
+                            )
+                        })}
+                    </ul>
+                </div>
+            )
+        }
+        const container = document.createElement('div')
+        const root = PReact.createRoot(container)
+        await PReact.act(() => {
+            root.render(<App />)
+        })
+        expect(container.innerHTML).toEqual(`<div>2<button>+</button><button>-</button><ul><li>0</li><li>1</li></ul></div>`)
+        await PReact.act(() => {
+            container.querySelectorAll('button')[0].click()
+        })
+        expect(container.innerHTML).toEqual(`<div>3<button>+</button><button>-</button><ul><li>0</li><li>1</li><li>2</li></ul></div>`)
+        await PReact.act(() => {
+            container.querySelectorAll('button')[1].click()
+            // 这里如果连续执行则不会生效，原因是这个时候的 count 还是 3
+            // container.querySelectorAll('button')[1].click()
+        })
+        await PReact.act(() => {
+            // 非连续执行，则符合预期
+            container.querySelectorAll('button')[1].click()
+        })
+        expect(mountSpy).toBeCalledTimes(1)
+        expect(updateSpy).toBeCalledTimes(3)
+        expect(container.innerHTML).toEqual(`<div>1<button>+</button><button>-</button><ul><li>0</li></ul></div>`)
+    })
+
 })

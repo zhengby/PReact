@@ -29,6 +29,7 @@ let workInProgress = null
 let workInProgressRoot = null
 let currentHookFiber = null
 let currentHookIndex = 0
+let currentEffectIndex = 0
 const isEvent = key => key.startsWith('on')
 const isProperty = key => key !== 'children' && !isEvent(key)
 const isGone = (prevProps, nextProps) => key => !(key in nextProps)
@@ -142,13 +143,15 @@ function commitDeletion(fiber, parentStateNode) {
     }
 }
 function performUnitOfWork(fiber) {
-    console.log('perform ', fiber)
+    // console.log('perform ', fiber)
     // 处理当前 fiber，创建 dom 设置属性
     const isFunctionComponent = typeof fiber.type === 'function'
     if (isFunctionComponent) {
         currentHookFiber = fiber
         currentHookFiber.memorizedState = []
+        currentHookFiber.memorizedEffect = []
         currentHookIndex = 0
+        currentEffectIndex = 0
         fiber.props.children = [fiber.type(fiber.props)]
     } else {
         if (!fiber.stateNode) {
@@ -295,10 +298,26 @@ function useReducer(reducer, initialState) {
     return [state, dispatch]
 }
 
+function useEffect(effect, deps) {
+    const oldHook = currentHookFiber.alternate?.memorizedEffect?.[currentEffectIndex]
+    const hasNoDeps = deps.length === 0
+    const hasDepsChanged = oldHook && !oldHook.deps.every((oldDep, i) => oldDep === deps[i])
+    if (currentHookFiber.effectTag === 'PLACEMENT' && hasNoDeps
+        || (currentHookFiber.effectTag === 'UPDATE' && hasDepsChanged)
+    ) {
+        effect()
+    }
+    currentHookFiber.memorizedEffect.push({
+        deps,
+    }) 
+    currentEffectIndex++
+}
+
 export default {
     createElement,
     createRoot,
     act,
     useState,
     useReducer,
+    useEffect,
 }

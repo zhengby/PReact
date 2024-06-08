@@ -36,6 +36,22 @@ const isGone = (prevProps, nextProps) => key => !(key in nextProps)
 const isChange = (prevProps, nextProps) => key => (key in prevProps) && (key in nextProps) && prevProps[key] !== nextProps[key]
 const isNew = (prevProps, nextProps) => key => !(key in prevProps) && (key in nextProps)
 
+class Component {
+    constructor(props) {
+        this.props = props
+        this.state = this.state || {}
+        this.__fiber = null
+    }
+    setState(partialState) {
+        this.state = {
+            ...this.state,
+            ...partialState
+        }
+        rerender()
+    }
+    componentDidMount() {}
+}
+
 class RootElement {
     _internalRoot = null
     constructor(container) {
@@ -84,23 +100,35 @@ function commitWork(fiber) {
     let domParentFiber = null
     if (fiber.return) {
         domParentFiber = fiber.return
-        while (!domParentFiber.stateNode) {
+        while (!domParentFiber.stateNode || domParentFiber?.stateNode instanceof Component) {
             domParentFiber = domParentFiber.return
         }
     }
     if (fiber.effectTag === 'PLACEMENT' && fiber.stateNode) {
-        updateDom(fiber.stateNode, {}, fiber.props)
-        domParentFiber.stateNode.appendChild(fiber.stateNode)
+        if (!(fiber.stateNode instanceof Component)) {
+            updateDom(fiber.stateNode, {}, fiber.props)
+            domParentFiber.stateNode.appendChild(fiber.stateNode)
+        }
     } else if (fiber.effectTag === 'UPDATE') {
-        updateDom(fiber.stateNode, fiber.alternate.props, fiber.props)
+        if (fiber?.stateNode instanceof Component) {
+            // componentDidupdate
+        } else {
+            updateDom(fiber.stateNode, fiber.alternate.props, fiber.props)
+        }
     } else if (fiber.effectTag === 'DELETION') {
         commitDeletion(fiber, domParentFiber.stateNode)
     }
     commitWork(fiber.child)
+    if (fiber.effectTag === 'PLACEMENT' && fiber.stateNode instanceof Component) {
+        fiber.stateNode.componentDidMount()
+    }
     commitWork(fiber.sibling)
 }
 
 function updateDom(stateNode, prevProps, nextProps) {
+    if (!stateNode) {
+        return
+    }
     // remove or change event binding
     Object.keys(prevProps)
         .filter(isEvent)
@@ -146,7 +174,17 @@ function performUnitOfWork(fiber) {
     // console.log('perform ', fiber)
     // 处理当前 fiber，创建 dom 设置属性
     const isFunctionComponent = typeof fiber.type === 'function'
-    if (isFunctionComponent) {
+    const isClassComponent =  fiber?.type?.prototype instanceof Component
+    if (isClassComponent) {
+        if (!fiber.stateNode) {
+            fiber.stateNode = new fiber.type(fiber.props)
+            fiber.stateNode .__fiber = fiber
+        } 
+        // 很关键 更新类组件实例的 state 和 props
+        fiber.stateNode.props = fiber.props
+        fiber.stateNode.state = fiber.stateNode.state
+        fiber.props.children = [fiber.stateNode.render()]
+    } else if (isFunctionComponent) {
         currentHookFiber = fiber
         currentHookFiber.memorizedState = []
         currentHookFiber.memorizedEffect = []
@@ -276,18 +314,22 @@ function useState(initialState) {
         }
         hook.queue.push(_action)
         // re-render
-        workInProgressRoot.current.alternate = {
-            stateNode: workInProgressRoot.container,
-            props: workInProgressRoot.current.props,
-            alternate: workInProgressRoot.current, // 重要，交换 alternate
-        }
-        workInProgressRoot.deletions = []
-        workInProgress = workInProgressRoot.current.alternate
-        window.requestIdleCallback(workloop)
+        rerender()
     }
     currentHookFiber.memorizedState.push(hook)
     currentHookIndex++
     return [hook.state, setState]
+}
+
+function rerender() {
+    workInProgressRoot.current.alternate = {
+        stateNode: workInProgressRoot.container,
+        props: workInProgressRoot.current.props,
+        alternate: workInProgressRoot.current, // 重要，交换 alternate
+    }
+    workInProgressRoot.deletions = []
+    workInProgress = workInProgressRoot.current.alternate
+    window.requestIdleCallback(workloop)
 }
 
 function useReducer(reducer, initialState) {
@@ -320,4 +362,5 @@ export default {
     useState,
     useReducer,
     useEffect,
+    Component,
 }

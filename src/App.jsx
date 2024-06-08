@@ -1,4 +1,5 @@
 import './App.css';
+import PReact from './preact06/PReact'
 
 function App() {
   return (
